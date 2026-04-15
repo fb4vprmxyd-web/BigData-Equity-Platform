@@ -212,14 +212,3 @@ __pycache__
 # volumes folders docker
 
 postgres-data/
-# Environment files
-.env
-.env.dev
-.env.local
-
-# Coverage
-htmlcov/
-
-# Output
-output/
-*.log

@@ -1,0 +1,84 @@
+# =============================================================================
+# UCL Institute of Finance & Technology
+# IFTE0003: Big Data in Quantitative Finance
+# Coursework 2 — Backtest Configuration
+# Strategy: Value-Sentiment Investment Strategy (Sector-Relative + Quality-Weighted)
+# =============================================================================
+# ALL tuneable parameters are defined here — never hardcoded in logic.
+# Ref: Part D §D4 of CW2 Master Guide
+
+backtest:
+  start_date: '2021-01-31'
+  end_date: '2025-12-31'
+  rebalance_frequency: quarterly       # quarterly | monthly | weekly
+  rebalance_months: [1, 4, 7, 10]      # End of Jan / Apr / Jul / Oct
+  reporting_lag_days: 90                # Point-in-time: financials available 90d after period end
+  execution_delay: 1                    # T+1 close execution
+
+scoring:
+  value_weight: 0.6
+  sentiment_weight: 0.4
+  max_debt_equity: 2.0                  # PDF canonical default
+  min_sentiment_confidence: 0.3         # ~2+ quality-weighted articles
+  selection_percentile: 0.20            # top 20% — PDF canonical default; threshold sensitivity tests both 0.10/0.20
+  # Momentum filter — Asness, Moskowitz & Pedersen (2013) "Value and
+  # Momentum Everywhere". Without this filter the sector-relative value
+  # factor picks past decliners (cheap stocks that are cheap because
+  # they crashed — classic "value trap"). A simple 6-month trailing-
+  # return floor excludes the worst falling knives while still
+  # admitting genuine value names.
+  momentum_filter:
+    enabled: true
+    lookback_days: 126                  # ~6 months of trading days
+    min_return: -0.05                   # exclude stocks down >5% — Asness (2013) value+momentum
+  winsorize_lower: 0.025
+  winsorize_upper: 0.975
+  zscore_cap: 3.0
+  shrinkage_k_sector: 20               # Bayesian shrinkage for sectors with <20 stocks
+  shrinkage_k_sentiment: 5             # Bayesian shrinkage for sentiment (n / (n + k))
+
+sentiment:
+  half_life_days: 7                     # Exponential recency decay: e^(-ln2/7 * days_old)
+  source_tiers:
+    tier1: ['reuters.com', 'bloomberg.com', 'ft.com', 'wsj.com']
+    tier2: ['cnbc.com', 'barrons.com', 'bbc.com', 'marketwatch.com']
+    tier3: ['seekingalpha.com', 'benzinga.com', 'fool.com']
+  tier_weights:
+    tier1: 1.0
+    tier2: 0.7
+    tier3: 0.4
+    default: 0.3
+
+portfolio:
+  weighting_scheme: inverse_volatility  # robust choice: weighting_scheme_comparison shows inv-vol beats equal-weight by ~33% in Sharpe and reduces drawdown (Maillard et al. 2010). All three schemes are tested in the comparison table.
+  max_position_weight: 0.05             # Max 5% per stock
+  max_sector_weight: 0.25              # Max 25% per GICS sector
+  min_holdings: 20
+  target_holdings: 40
+  buffer_buy_pctl: 0.60                 # Buy only above 60th percentile
+  buffer_sell_pctl: 0.40                # Sell only below 40th percentile
+
+costs:
+  transaction_cost_bps: 25              # One-way, 25 bps baseline
+  stress_test_bps: 50                   # Stress test at 50 bps
+
+benchmark:
+  primary: '^GSPC'                      # S&P 500
+  secondary: 'IWVL.L'                   # MSCI World Value ETF
+
+risk_free:
+  annual_rate: 0.04                     # Approximate risk-free rate for Sharpe calculation
+
+data:
+  postgres_schema: 'systematic_equity'
+  table_prices: 'daily_prices'
+  table_values: 'value_metrics'
+  table_sentiment: 'sentiment_scores'
+  table_composite: 'composite_rankings'
+  table_company: 'company_static'
+  lookback_years: 5
+
+# CW1 database connection — reads from CW1 conf.yaml
+cw1:
+  config_path: '../coursework_one/config/conf.yaml'
+  env_type: 'dev'
