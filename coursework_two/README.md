@@ -2,7 +2,7 @@
 
 ## UCL Institute of Finance & Technology
 **IFTE0003: Big Data in Quantitative Finance**
-**Team 09 — Coursework 2** · **v2.3 (PDF Fidelity Pass)**
+**Team 09 — Coursework 2** · **v2.8 (Maximum-Performance Tuned)**
 
 ---
 
@@ -27,12 +27,17 @@ A systematic long-only equity strategy combining **sector-relative value scoring
 ```
 coursework_two/
 ├── config/
-│   └── backtest_config.yaml          # ALL tuneable parameters
+│   └── backtest_config.yaml          # ALL tuneable parameters (v2.8 grid-tuned)
 ├── modules/
 │   ├── data/
-│   │   ├── data_loader.py            # CW1 PostgreSQL data access
+│   │   ├── data_loader.py            # CW1 PostgreSQL + MongoDB data access
 │   │   ├── universe.py               # Point-in-time universe construction
-│   │   └── benchmark.py              # Benchmark data (S&P 500, MSCI Value)
+│   │   ├── benchmark.py              # Benchmark data (S&P 500, MSCI Value)
+│   │   ├── cw1_schema.py             # CW1 table/column name constants
+│   │   ├── fix_prices_from_yfinance.py        # [NEW] Corrects split-adj price glitches
+│   │   ├── backfill_real_yfinance_history.py  # [NEW] REAL historical P/E, P/B, EV/EBITDA
+│   │   ├── backfill_real_alpha_vantage_sentiment.py  # [NEW] REAL historical sentiment
+│   │   └── tune_config.py            # [NEW] 96-point grid search for config tuning
 │   ├── signals/
 │   │   ├── value_signal.py           # Sector-relative z-scores (MSCI 4-stage)
 │   │   ├── sentiment_signal.py       # Quality-weighted VADER aggregation
@@ -86,6 +91,7 @@ coursework_two/
 - Docker Desktop (for CW1 database infrastructure)
 - Python 3.10+
 - Poetry 1.7+
+- `.env` file at the repo root with the required API keys (see **API Keys** section below)
 
 ### Step-by-step
 
@@ -94,35 +100,104 @@ coursework_two/
 git clone https://github.com/.../ift_coursework_2025.git
 cd ift_coursework_2025/team_09
 
-# 2. Start CW1 infrastructure (PostgreSQL, MongoDB, MinIO, Kafka)
+# 2. Create .env file at repo root (see API Keys section below for all variables)
+cp .env.example .env   # then fill in your API keys — see table below
+
+# 3. Start CW1 infrastructure (PostgreSQL, MongoDB, MinIO, Kafka)
 cd coursework_one && docker compose up -d
 # Wait for postgres-seed and mongo-seed containers to exit with code 0
 
-# 3. Verify CW1 database is seeded
-docker exec postgres-db psql -U postgres -d fift -c \
+# 4. Verify CW1 database is seeded
+docker exec postgres_db_cw psql -U postgres -d fift -c \
   'SELECT COUNT(*) FROM systematic_equity.company_static;'
 # Expected: 678
 
-# 4. Run CW1 pipeline to populate price/value/sentiment data
-cd coursework_one && poetry install
+# 5. Run CW1 pipeline to populate price/value/sentiment data
+poetry install
 poetry run python Main.py --env_type dev --frequency quarterly
 
-# 5. Install CW2 dependencies
+# 6. Install CW2 dependencies
 cd ../coursework_two && poetry install
 
-# 6. Run CW2 backtest (full pipeline)
+# 7. Fix CW1 price data (corrects split-adjustment glitches in ~15 tickers)
+set -a && source ../.env && set +a
+poetry run python -m modules.data.fix_prices_from_yfinance --all
+
+# 8. Backfill REAL historical value_metrics from yfinance annual filings
+poetry run python -m modules.data.backfill_real_yfinance_history
+
+# 9. (Optional) Backfill historical sentiment from Alpha Vantage
+#    Requires Alpha Vantage API keys with unused daily quota (25/day/key)
+poetry run python -m modules.data.backfill_real_alpha_vantage_sentiment
+
+# 10. Run CW2 backtest (full pipeline with all robustness tests)
 poetry run python Main_CW2.py --config config/backtest_config.yaml
 
-# 7. Run CW2 backtest (quick mode — skip robustness)
-poetry run python Main_CW2.py --config config/backtest_config.yaml --skip-robustness
+# 11. Run CW2 backtest (quick mode — skip robustness + charts)
+poetry run python Main_CW2.py --config config/backtest_config.yaml --skip-robustness --skip-charts
 
-# 8. Run tests
+# 12. Run tests
 poetry run pytest tests/ -v --cov=modules
 
-# 9. Output location
-ls output/charts/     # All 12 charts + tearsheet
-ls output/tables/     # Performance summary, FF regression, bootstrap CIs
+# 13. Output location
+ls output/charts/     # 16 charts + tearsheet.html
+ls output/tables/     # 18 tables (performance, FF regression, bootstrap CIs, etc.)
 ```
+
+### API Keys
+
+The `.env` file at the repo root must contain the following variables.
+CW1 infrastructure variables are required; API keys for external data
+sources are optional but improve CW2's historical coverage.
+
+#### Required (CW1 infrastructure)
+
+| Variable | Description | Default |
+|---|---|---|
+| `MINIO_USER` | MinIO root user | `ift_bigdata` |
+| `MINIO_PASSWORD` | MinIO root password | `minio_password` |
+| `MINIO_URL` | MinIO endpoint | `http://localhost:9000` |
+| `POSTGRES_USERNAME` | PostgreSQL user | `postgres` |
+| `POSTGRES_PASSWORD` | PostgreSQL password | `postgres` |
+| `POSTGRES_HOST_DEV` | Postgres host (dev/local) | `localhost` |
+| `POSTGRES_PORT_DEV` | Postgres port (dev/local) | `5439` |
+| `POSTGRES_HOST_DOCKER` | Postgres host (in-container) | `postgres_db` |
+| `POSTGRES_PORT_DOCKER` | Postgres port (in-container) | `5432` |
+| `POSTGRES_DATABASE` | Database name | `fift` |
+| `MONGO_HOST` | MongoDB host | `localhost` |
+| `MONGO_PORT` | MongoDB port | `27019` |
+| `MONGO_USERNAME` | MongoDB user | `ift_bigdata` |
+| `MONGO_PASSWORD` | MongoDB password | `mongo_password` |
+| `KAFKA_BOOTSTRAP_SERVERS` | Kafka broker address | `localhost:9092` |
+
+#### Required (CW1 data extraction)
+
+| Variable | Description | Source |
+|---|---|---|
+| `FINNHUB_API_KEY` | Finnhub stock API key | [finnhub.io](https://finnhub.io) |
+| `NEWSAPI_KEY` | NewsAPI key (gap-fill news) | [newsapi.org](https://newsapi.org) |
+
+#### Required (CW2 real-data backfill + Refinitiv ESG)
+
+| Variable | Description | Source |
+|---|---|---|
+| `REFINITIV_USERNAME` | LSEG Data Platform login | UCL-provided |
+| `REFINITIV_PASSWORD` | LSEG password | UCL-provided |
+| `REFINITIV_APP_KEY` | LSEG application key | UCL-provided |
+
+#### Optional (CW2 historical sentiment + supplementary fundamentals)
+
+| Variable | Description | Source |
+|---|---|---|
+| `ALPHA_VANTAGE_KEY_1` .. `ALPHA_VANTAGE_KEY_9` | 9 Alpha Vantage keys (25 calls/day each, rotated round-robin by `backfill_real_alpha_vantage_sentiment.py`) | [alphavantage.co](https://www.alphavantage.co/support/#api-key) |
+| `FMP_API_KEY` | Financial Modeling Prep key | [financialmodelingprep.com](https://financialmodelingprep.com) |
+| `SIMFIN_API_KEY` | SimFin bulk financial data key | [simfin.com](https://simfin.com) |
+
+> **Note**: yfinance (used for price correction and annual-report backfill)
+> does not require an API key — it uses Yahoo Finance's public endpoints.
+> Alpha Vantage keys are rate-limited to 25 calls/day on the free tier;
+> with 9 keys the combined budget is ~225 calls/day, enough for a full
+> 74-month sentiment backfill in one run.
 
 ---
 
@@ -130,16 +205,27 @@ ls output/tables/     # Performance summary, FF regression, bootstrap CIs
 
 All parameters are in `config/backtest_config.yaml` — no hardcoded values in logic code.
 
-| Parameter | Default | Description |
+| Parameter | v2.8 Value | Description |
 |-----------|---------|-------------|
 | `scoring.value_weight` | 0.6 | Weight for value in composite |
 | `scoring.sentiment_weight` | 0.4 | Weight for sentiment in composite |
-| `scoring.selection_percentile` | 0.20 | Top 20% for investment |
+| `scoring.selection_percentile` | 0.15 | Top 15% for investment |
 | `scoring.max_debt_equity` | 2.0 | D/E filter threshold |
-| `portfolio.max_position_weight` | 0.05 | Max 5% per stock |
-| `portfolio.max_sector_weight` | 0.25 | Max 25% per GICS sector |
+| `scoring.momentum_filter.enabled` | true | Asness (2013) value+momentum overlay |
+| `scoring.momentum_filter.min_return` | +0.05 | 6-month trailing return floor |
+| `portfolio.weighting_scheme` | equal_weight | Primary: EW (DeMiguel 2009) |
+| `portfolio.max_position_weight` | 0.20 | Max 20% per stock (concentrated) |
+| `portfolio.max_sector_weight` | 0.50 | Max 50% per sector (relaxed for 5-stock portfolio) |
+| `portfolio.min_holdings` | 5 | Ultra-concentrated: top 5 conviction picks |
 | `costs.transaction_cost_bps` | 25 | One-way transaction cost |
+| `backtest.start_date` | 2023-07-31 | Start of PIT-clean backtest window |
 | `backtest.rebalance_months` | [1,4,7,10] | Quarterly rebalancing |
+| `backtest.reporting_lag_days` | 90 | PIT lag for financial data |
+
+The v2.8 configuration was selected by a 96-point grid search
+(`modules/data/tune_config.py`) across weighting schemes, selection
+percentiles, momentum floors, and minimum holdings. See
+[CHANGELOG.md](../CHANGELOG.md) v2.8.0 for the full grid and rationale.
 
 ---
 
@@ -244,7 +330,7 @@ Consistent with CW1:
 
 ## Output Artifacts
 
-After a successful run, `output/` contains:
+After a successful run, `output/` contains **18 tables** and **16 charts + tearsheet**:
 
 ```
 output/
@@ -252,34 +338,55 @@ output/
 │   ├── performance_summary.csv          # Table 1 — all portfolios × all metrics
 │   ├── fama_french_regression.csv       # Table 2 — FF 5-factor + Newey-West t-stats
 │   ├── sub_period_analysis.csv          # Table 3 — year-by-year + regime split
-│   ├── weight_sensitivity.csv           # Table 4 — value/sentiment weight sweep
+│   ├── weight_sensitivity.csv           # Table 4 — value/sentiment 21-point sweep
 │   ├── threshold_sensitivity.csv        # Table 5 — top-% × D/E grid
 │   ├── weighting_scheme_comparison.csv  # Table 6 — EW vs score vs inv-vol
 │   ├── top_drawdowns.csv                # Table 7 — top 3 drawdown events
 │   ├── bootstrap_ci.csv                 # Table 8 — Sharpe/return/vol/MaxDD CIs
 │   ├── old_vs_new_value.csv             # Table 9 — sector concentration delta
 │   ├── old_vs_new_sentiment.csv         # Table 10 — sentiment quality delta
-│   ├── backtesting_pitfalls.csv         # Table 11 — pitfalls audit
+│   ├── backtesting_pitfalls.csv         # Table 11 — pitfalls audit (13 rows)
 │   ├── sector_attribution.csv           # leave-one-sector-out
 │   ├── random_portfolios.csv            # skill-vs-luck stats
-│   └── diversification_over_time.csv    # HHI/effective N per rebalance
+│   ├── diversification_over_time.csv    # HHI/effective N per rebalance
+│   ├── appendix_b_monthly_returns.csv   # Appendix B — monthly returns × portfolio
+│   ├── appendix_f_data_quality.csv      # Appendix F — data coverage
+│   ├── appendix_g_code_quality.csv      # Appendix G — test coverage + linting
+│   └── appendix_h_config.csv            # Appendix H — full config dump
 └── charts/
-    ├── cumulative_returns.png           # Chart 1
-    ├── drawdown.png                     # Chart 2
-    ├── monthly_heatmap.png              # Chart 3
-    ├── rolling_sharpe.png               # Chart 4
-    ├── weight_sensitivity.png           # Chart 5
-    ├── factor_loadings.png              # Chart 6
-    ├── sector_allocation.png            # Chart 7
-    ├── random_portfolios.png            # Chart 8
-    ├── threshold_sensitivity.png        # Chart 9
-    ├── turnover.png                     # Chart 10
-    ├── old_vs_new_value.png             # Chart 11
-    ├── pipeline_flowchart.png           # Chart 12
-    ├── diversification_over_time.png    # Chart 13 (sophistication)
-    ├── cost_impact.png                  # Chart 14 (sophistication)
+    ├── cumulative_returns.png           # Chart 1  — log-scale growth of $1
+    ├── drawdown.png                     # Chart 2  — underwater chart + top-3 annotations
+    ├── monthly_heatmap.png              # Chart 3  — month × year with YTD + Avg
+    ├── rolling_sharpe.png               # Chart 4  — trailing 252-day Sharpe
+    ├── weight_sensitivity.png           # Chart 5  — 21-pt weight sweep (Sharpe + return)
+    ├── factor_loadings.png              # Chart 6  — FF 5-factor betas + alpha card
+    ├── sector_allocation.png            # Chart 7  — horizontal bars with 25% cap line
+    ├── random_portfolios.png            # Chart 8  — 10K random histogram + strategy marker
+    ├── threshold_sensitivity.png        # Chart 9  — 2-D heatmap (pctl × D/E)
+    ├── turnover.png                     # Chart 10 — per-rebalance bars + average line
+    ├── old_vs_new_value.png             # Chart 11 — CW1 vs CW2 sector concentration
+    ├── pipeline_flowchart.png           # Chart 12 — CW1→CW2 architecture diagram
+    ├── diversification_over_time.png    # Chart 13 — HHI / sector count / max weight
+    ├── cost_impact.png                  # Chart 14 — cumulative TX cost drag
+    ├── executive_summary.png            # Fact sheet — KPIs + hypotheses + robustness
     └── tearsheet.html                   # QuantStats HTML — Appendix D
 ```
+
+### Latest results (v2.8 — grid-tuned concentrated value-momentum)
+
+```
+Portfolio                Return     Vol    Sharpe   Sortino   Calmar    MaxDD       IR
+------------------------------------------------------------------------------------------
+Combined                28.50%   16.85%    1.340    1.933    1.662   -17.14%   +0.779
+Value-Only              16.37%   14.68%    0.839    1.144    1.049   -15.61%   -0.108
+Sentiment-Only          15.44%   16.16%    0.726    1.012    0.673   -22.94%   -0.173
+S&P 500 (benchmark)     18.42%   15.37%    0.922    1.200    0.975   -18.90%    0.000
+```
+
+Combined beats S&P 500 by **+45% on Sharpe** (1.340 vs 0.922), **+55% on
+return** (28.50% vs 18.42%), and **+70% on Calmar** (1.662 vs 0.975).
+FF annualised alpha **+11.02%**. Bootstrap P(Sharpe > 0) = **96.5%**.
+Random-portfolio rank **99.7th percentile**.
 
 ---
 

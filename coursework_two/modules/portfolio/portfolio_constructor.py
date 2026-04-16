@@ -49,12 +49,18 @@ class PortfolioConstructor:
         self._target_holdings = config['portfolio']['target_holdings']
         self._buffer_buy = config['portfolio']['buffer_buy_pctl']
         self._buffer_sell = config['portfolio']['buffer_sell_pctl']
-        # Read screening thresholds from config so value_only / sentiment_only
-        # variants respect the same selection_percentile / D/E / confidence
-        # tuning applied to the combined portfolio.
         self._selection_pctl = config['scoring']['selection_percentile']
         self._max_de = config['scoring']['max_debt_equity']
         self._min_confidence = config['scoring']['min_sentiment_confidence']
+
+        # Long-short extension: when enabled, the portfolio shorts the
+        # bottom quintile of the eligible universe to capture the spread
+        # between winners and losers. The short sleeve is sized as a
+        # fraction of the long sleeve.
+        ls_cfg = config.get('portfolio', {}).get('long_short', {}) or {}
+        self._long_short = bool(ls_cfg.get('enabled', False))
+        self._short_pctl = float(ls_cfg.get('short_percentile', 0.20))
+        self._short_ratio = float(ls_cfg.get('short_ratio', 0.5))
 
     def construct(
         self,
@@ -103,11 +109,74 @@ class PortfolioConstructor:
             min_holdings=self._min_holdings,
         )
 
+        # --- Step 4 (optional): Long-short extension ---
+        if self._long_short:
+            weights = self._add_short_sleeve(
+                signals, weights, sector_map, scheme, prices,
+            )
+
         logger.info(
             "Portfolio constructed: %d holdings, scheme=%s, sum=%.6f",
-            (weights > 1e-8).sum(), scheme, weights.sum(),
+            (weights > 1e-8).sum() + (weights < -1e-8).sum(), scheme, weights.sum(),
         )
         return weights
+
+    def _add_short_sleeve(
+        self,
+        signals: pd.DataFrame,
+        long_weights: pd.Series,
+        sector_map: dict,
+        scheme: str,
+        prices: pd.DataFrame = None,
+    ) -> pd.Series:
+        """Short the most overvalued stocks to capture the long-short spread.
+
+        Selects from the FULL scored universe (including ineligible
+        stocks), picking the lowest-value_score names — these are stocks
+        the sector-relative z-score flags as genuinely expensive within
+        their sector. This is the classic HML short leg: long cheap
+        stocks, short expensive ones.
+        """
+        full = signals[signals['value_score'].notna()].copy()
+        if len(full) == 0:
+            return long_weights
+
+        long_set = set(long_weights[long_weights > 1e-8].index)
+
+        # Candidates for shorting: bottom quintile by VALUE score
+        # (not composite — we want the truly overvalued, not just
+        # those with low sentiment). Exclude anything we're long.
+        candidates = full[~full['company_id'].isin(long_set)]
+        if len(candidates) == 0:
+            return long_weights
+
+        n_short = max(5, int(len(candidates) * self._short_pctl))
+        bottom = candidates.nsmallest(n_short, 'value_score')
+        short_tickers = bottom['company_id'].tolist()
+
+        if not short_tickers:
+            return long_weights
+
+        # Equal-weight the short side for simplicity (inv-vol on shorts
+        # can perversely overweight the most volatile names)
+        from modules.portfolio.weighting import compute_equal_weight
+        short_raw = compute_equal_weight(short_tickers)
+
+        long_notional = long_weights[long_weights > 0].sum()
+        target_short_notional = long_notional * self._short_ratio
+        short_scaled = short_raw / short_raw.sum() * target_short_notional
+
+        combined = long_weights.copy()
+        for ticker, w in short_scaled.items():
+            combined[ticker] = combined.get(ticker, 0) - w
+
+        logger.info(
+            "Long-short: %d long (%.0f%%), %d short (%.0f%%), net = %.1f%%",
+            (combined > 1e-8).sum(), long_notional * 100,
+            (combined < -1e-8).sum(), target_short_notional * 100,
+            combined.sum() * 100,
+        )
+        return combined
 
     def construct_value_only(
         self,

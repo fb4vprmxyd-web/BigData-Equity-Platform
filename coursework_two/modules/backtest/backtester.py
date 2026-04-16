@@ -69,6 +69,19 @@ class Backtester:
         self._momentum_lookback_days = int(mom_cfg.get('lookback_days', 126))
         self._momentum_min_return = float(mom_cfg.get('min_return', -0.05))
 
+        # Market-regime overlay (Antonacci 2014 dual-momentum, Moskowitz-
+        # Ooi-Pedersen 2012 time-series momentum). When the S&P 500 trades
+        # below its own trailing moving average we scale the portfolio down
+        # and park the remainder in cash. This is a SIGNAL, not leverage,
+        # so it can break Sharpe's leverage-invariance ceiling.
+        reg_cfg = config.get('backtest', {}).get('regime_filter', {}) or {}
+        self._regime_enabled = bool(reg_cfg.get('enabled', False))
+        self._regime_fast_ma = int(reg_cfg.get('fast_ma_days', 50))
+        self._regime_slow_ma = int(reg_cfg.get('slow_ma_days', 200))
+        self._regime_bull_weight = float(reg_cfg.get('bull_weight', 1.0))
+        self._regime_bear_weight = float(reg_cfg.get('bear_weight', 0.0))
+        self._regime_signal = None  # lazy-built from benchmark prices
+
     def run(
         self,
         prices: pd.DataFrame,
@@ -361,6 +374,14 @@ class Backtester:
             name='portfolio_return',
         )
 
+        # Apply the market-regime overlay (cash sleeve during bearish
+        # S&P regime). This scales each daily return by the regime
+        # exposure and adds the cash-sleeve portion earning the risk-
+        # free rate, breaking Sharpe's leverage invariance because the
+        # regime signal is a timing alpha source.
+        if self._regime_enabled:
+            period_returns = self._apply_regime_overlay(period_returns)
+
         # End-of-period drifted weights
         final_value = portfolio_value[-1] if len(portfolio_value) > 0 else 1.0
         if final_value > 0:
@@ -373,6 +394,71 @@ class Backtester:
             drifted = pd.Series(dtype=float)
 
         return period_returns, drifted
+
+    def _build_regime_signal(self) -> pd.Series:
+        """Compute a daily bullish/bearish exposure signal for the S&P 500.
+
+        Returns a Series indexed by trading dates with values in
+        ``[bear_weight, bull_weight]``. The signal is ``bull_weight`` on
+        days when the fast moving average is above the slow moving
+        average (bullish trend) and ``bear_weight`` otherwise. The
+        boolean cross is computed from the S&P 500 adjusted close fetched
+        by :class:`modules.data.benchmark.BenchmarkLoader`.
+        """
+        try:
+            from modules.data.benchmark import BenchmarkLoader
+            bl = BenchmarkLoader(self._config)
+            # Pull a year of extra history so the slow MA is defined at
+            # the start of the backtest window.
+            start = (
+                pd.Timestamp(self._config['backtest']['start_date'])
+                - pd.Timedelta(days=self._regime_slow_ma * 2)
+            ).strftime('%Y-%m-%d')
+            end = self._config['backtest']['end_date']
+            prices = bl.load_primary(start, end)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning('Regime filter failed to load S&P 500: %s', exc)
+            return pd.Series(dtype=float)
+
+        if prices is None or len(prices) == 0:
+            return pd.Series(dtype=float)
+
+        fast = prices.rolling(self._regime_fast_ma, min_periods=self._regime_fast_ma).mean()
+        slow = prices.rolling(self._regime_slow_ma, min_periods=self._regime_slow_ma).mean()
+        bullish = fast > slow
+        exposure = bullish.map(
+            lambda b: self._regime_bull_weight if b else self._regime_bear_weight
+        )
+        # Lag by 1 day so we never trade on same-day close
+        exposure = exposure.shift(1).fillna(self._regime_bull_weight)
+        logger.info(
+            'Regime filter: %d days bullish, %d days bearish (%.1f%% cash on avg)',
+            int((exposure == self._regime_bull_weight).sum()),
+            int((exposure == self._regime_bear_weight).sum()),
+            (1 - exposure.mean()) * 100,
+        )
+        return exposure
+
+    def _apply_regime_overlay(self, period_returns: pd.Series) -> pd.Series:
+        """Blend daily portfolio returns with a risk-free cash sleeve.
+
+        On each day ``r_final = exposure · r_portfolio + (1 − exposure) · r_f/252``.
+        """
+        if self._regime_signal is None:
+            self._regime_signal = self._build_regime_signal()
+        if len(self._regime_signal) == 0:
+            return period_returns
+        rf_daily = self._config.get('risk_free', {}).get('annual_rate', 0.04) / 252
+        exposure = self._regime_signal.reindex(
+            period_returns.index, method='ffill',
+        ).fillna(self._regime_bull_weight)
+        blended = (
+            exposure.values * period_returns.values
+            + (1.0 - exposure.values) * rf_daily
+        )
+        return pd.Series(
+            blended, index=period_returns.index, name=period_returns.name,
+        )
 
     def _drift_weights(self, weights: pd.Series, period_returns: pd.Series) -> pd.Series:
         """Identity passthrough retained for backwards compatibility.

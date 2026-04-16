@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ift-cw2-backtest"
-version = "1.0.0"
+version = "2.8.0"
 description = "IFTE0003 CW2: Value-Sentiment Investment Strategy — Backtest & Portfolio Construction"
 authors = ["Team 09 <team_09@ucl.ac.uk>"]
 readme = "README.md"

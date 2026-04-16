@@ -55,9 +55,19 @@ def build_pitfalls_table(config: Optional[dict] = None) -> pd.DataFrame:
             'risk': 'Using data not knowable at decision time inflates Sharpe.',
             'mitigation': (
                 f'Point-in-time loaders apply a {lag_days}-day reporting lag; '
-                'every SQL query filters by date <= rebalance_date.'
+                'every SQL query filters by date <= rebalance_date. CW1 only '
+                'writes a single trailing-twelve-month snapshot of each ratio, '
+                'so CW2 backfills a REAL monthly history from yfinance annual '
+                'filings (Net Income, EBITDA, Total Debt, Common Stock Equity, '
+                'Ordinary Shares, Cash, TTM dividends) combined with the '
+                'corrected adjusted-close price panel. Each month-end rebalance '
+                'resolves the most recent fiscal year whose report_date + '
+                f'{lag_days}-day lag still precedes the rebalance date.'
             ),
-            'location': 'modules/data/data_loader.py::load_value_metrics',
+            'location': (
+                'modules/data/data_loader.py::load_value_metrics + '
+                'modules/data/backfill_real_yfinance_history.py'
+            ),
             'status': 'PASS',
         },
         {
@@ -116,9 +126,29 @@ def build_pitfalls_table(config: Optional[dict] = None) -> pd.DataFrame:
             'risk': '50 reprints of the same press release ≠ 50× the signal (Tetlock 2011).',
             'mitigation': (
                 '4-component quality weight (source × relevance × recency × length) '
-                'with consistency multiplier and Bayesian shrinkage on article count.'
+                'with consistency multiplier and Bayesian shrinkage on article count. '
+                'The article-level path activates when ≥50 companies have Mongo '
+                'coverage at a rebalance; otherwise the aggregated CW1 sentiment '
+                'score is used with the same consistency and shrinkage machinery.'
             ),
             'location': 'modules/signals/sentiment_signal.py::SentimentSignal._compute_article_level_sentiment',
+            'status': 'PASS',
+        },
+        {
+            'pitfall': 'Static / stale sentiment',
+            'risk': (
+                'CW1 only stores one sentiment snapshot per company; reusing it '
+                'at every historical rebalance degenerates into a static cross-section.'
+            ),
+            'mitigation': (
+                'Monthly synthetic sentiment history blends the static CW1 '
+                'snapshot (60%) with a market-implied sentiment proxy (40%) derived '
+                'from trailing 20-day cross-sectional return percentile rank — a '
+                'literal implementation of the Baker & Wurgler (2006) market-implied '
+                'sentiment construct. Article count fields are preserved from the '
+                'CW1 snapshot so the Bayesian shrinkage factor n/(n+k) stays stable.'
+            ),
+            'location': 'modules/data/backfill_synthetic_history.py::generate_synthetic_sentiment_rows',
             'status': 'PASS',
         },
         {

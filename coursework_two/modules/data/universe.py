@@ -88,9 +88,11 @@ class UniverseConstructor:
         active = len(universe)
         inactive = total - active
         logger.info(
-            "Universe at %s: %d active / %d inactive / %d total (%.1f%% survivorship)",
+            "Universe at %s: %d active / %d inactive / %d total "
+            "(%.1f%% survivorship, %.1f%% attrition)",
             rebalance_date.strftime('%Y-%m-%d'),
             active, inactive, total,
+            active / total * 100 if total > 0 else 0,
             inactive / total * 100 if total > 0 else 0,
         )
         return universe

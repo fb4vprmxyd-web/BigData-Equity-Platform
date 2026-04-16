@@ -131,12 +131,19 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Logs (may contain echoed API keys from rate-limit responses)
+logs/
+*.log
+backtest_run.log
 
 # Spyder project settings
 .spyderproject

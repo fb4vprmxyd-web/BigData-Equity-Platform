@@ -458,7 +458,8 @@ def run_pipeline():
 
         # Test 1: Weight sensitivity (Table 4)
         logger.info("Test 1: Weight sensitivity (value/sentiment mix)...")
-        weight_df = weight_sensitivity_analysis(run_with_config, config, steps=11)
+        # PDF §A8 specifies 5% increments → 21 weight combinations
+        weight_df = weight_sensitivity_analysis(run_with_config, config, steps=21)
         weight_path = os.path.join(args.output_dir, 'tables', 'weight_sensitivity.csv')
         weight_df.to_csv(weight_path, index=False)
 
@@ -493,6 +494,7 @@ def run_pipeline():
             plot_pipeline_flowchart,
             plot_diversification_over_time,
             plot_cumulative_cost_impact,
+            plot_executive_summary_card,
         )
         from modules.visualization.tearsheet import generate_tearsheet
 
@@ -622,6 +624,52 @@ def run_pipeline():
                 results['combined']['rebalance_info'],
                 os.path.join(chart_dir, 'cost_impact.png'),
             )
+
+        # Executive summary card (one-page fact sheet for the report cover)
+        bootstrap_dict = None
+        if not args.skip_robustness and 'combined' in results:
+            try:
+                bootstrap_dict = {
+                    'point_estimate': bootstrap_result['point_estimate'],
+                    'ci_lower': bootstrap_result['ci_lower'],
+                    'ci_upper': bootstrap_result['ci_upper'],
+                    'prob_sharpe_positive': bootstrap_result['prob_sharpe_positive'],
+                }
+            except (NameError, KeyError):
+                bootstrap_dict = None
+        plot_executive_summary_card(
+            all_metrics,
+            bootstrap_result=bootstrap_dict,
+            ff_result=ff_result,
+            random_result=random_result,
+            output_path=os.path.join(chart_dir, 'executive_summary.png'),
+        )
+
+    # --- Step 7b: Appendix B — complete backtest results (monthly × portfolio) ---
+    # Part C §C3 Appendix B: "Complete backtest results (all months, all portfolios)"
+    try:
+        monthly_rows = []
+        for ptype, result in results.items():
+            rets = result.get('returns')
+            if rets is None or len(rets) == 0:
+                continue
+            monthly = rets.resample('ME').apply(lambda x: (1 + x).prod() - 1)
+            for date, ret in monthly.items():
+                monthly_rows.append({
+                    'portfolio': ptype,
+                    'month': date.strftime('%Y-%m'),
+                    'return': float(ret),
+                })
+        if monthly_rows:
+            appendix_b_path = os.path.join(
+                args.output_dir, 'tables', 'appendix_b_monthly_returns.csv',
+            )
+            pd.DataFrame(monthly_rows).pivot(
+                index='month', columns='portfolio', values='return',
+            ).to_csv(appendix_b_path)
+            logger.info('Appendix B saved: %s', appendix_b_path)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning('Appendix B generation failed: %s', exc)
 
     # --- Step 8: Auto-generated appendices (F, G, H) ---
     logger.info("--- STEP 8: Generating appendices F, G, H ---")
