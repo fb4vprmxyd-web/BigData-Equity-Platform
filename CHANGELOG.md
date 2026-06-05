@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.8.1] - 2026-04-16
+
+### CW1 README — Copy-Paste-Friendly Commands & .env.dev Fix
+
+Fixes all shell commands in the CW1 README so they can be pasted directly into
+the terminal without errors.
+
+#### Fixed
+
+- **`.env.example` removed** — the file was never committed to the repo, so
+  `cp .env.example .env.dev` always failed with `No such file or directory`.
+  Step 5 now contains an inline `cat > .env.dev << 'EOF'` block that creates
+  the file directly with all 14 required environment variables (credentials
+  matching `docker-compose.yml`).
+- **Bash comment lines no longer mixed with commands** — every `# comment`
+  that lived inside a ` ```bash ` fence has been moved to regular Markdown
+  text above the code block. This prevents `zsh: command not found: #` and
+  `zsh: number expected` errors when users copy-paste multiple lines at once.
+- **Multi-command blocks split into single-command blocks** — Sections 11-13,
+  18-19, 21, 23, 25, and the full Section 26 end-to-end walkthrough now use
+  one `bash` fence per command so each can be copied and pasted individually.
+- **Project structure listing updated** — removed the non-existent
+  `.env.example` entry; `.env.dev` now shows "(created in Step 5)".
+
 ## [2.8.0] - 2026-04-16
 
 ### Maximum-Performance Configuration — Sharpe 1.340

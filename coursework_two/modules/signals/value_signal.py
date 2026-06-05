@@ -12,14 +12,15 @@ appear 'cheap' vs technology due to structural sector differences.
 Ehsani, Harvey & Li (2023): standard HML 'consistently overweights
 Finance and Utilities'.
 
-Solution — MSCI 4-Stage Pipeline:
-  Stage 1: Flip ratios (E/P, B/P, EBITDA/EV, Div Yield).
-           Winsorize at 2.5/97.5 percentiles.
-           Exclude EV/EBITDA for financials.
-  Stage 2: Cross-sectional z-scores across all stocks.
-  Stage 3: Composite z = average of metric z-scores.
-           Within-sector re-standardization.
-  Stage 4: Cap at ±3.  Bayesian shrinkage for small sectors.
+Solution — MSCI 4-Stage Pipeline::
+
+    Stage 1: Flip ratios (E/P, B/P, EBITDA/EV, Div Yield).
+             Winsorize at 2.5/97.5 percentiles.
+             Exclude EV/EBITDA for financials.
+    Stage 2: Cross-sectional z-scores across all stocks.
+    Stage 3: Composite z = average of metric z-scores.
+             Within-sector re-standardization.
+    Stage 4: Cap at +/-3.  Bayesian shrinkage for small sectors.
 
 Evidence:
   - Ehsani et al. (2023): within-sector Sharpe 0.154 vs 0.032 across-sector

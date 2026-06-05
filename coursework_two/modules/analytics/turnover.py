@@ -9,7 +9,7 @@ Calculates portfolio turnover metrics:
   - Average quarterly and annual turnover
   - Cumulative cost impact
 
-Turnover = Sum(|w_new,i - w_old,i|) / 2 (one-way, per rebalance)
+``Turnover = Sum(|w_new,i - w_old,i|) / 2`` (one-way, per rebalance)
 
 Ref: Part A §A7.4
 """

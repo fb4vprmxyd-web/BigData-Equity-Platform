@@ -5,10 +5,11 @@ Topic   : Sensitivity and robustness testing
 Project : CW2 - Value-Sentiment Investment Strategy
 
 Implements 4 of the 6 robustness tests:
-  1. Weight sensitivity: vary value/sentiment weights from 0/100 to 100/0
-  2. Threshold sensitivity: vary top %, D/E limit
-  3. Sub-period analysis: year-by-year + regime splits
-  6. Sector attribution: leave-one-sector-out
+
+* Test 1 — Weight sensitivity: vary value/sentiment weights from 0/100 to 100/0
+* Test 2 — Threshold sensitivity: vary top %, D/E limit
+* Test 3 — Sub-period analysis: year-by-year + regime splits
+* Test 6 — Sector attribution: leave-one-sector-out
 
 Tests 4 (Bootstrap CIs) and 5 (Random portfolios) are in
 separate modules.

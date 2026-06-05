@@ -38,7 +38,7 @@ class TransactionCostModel:
     ) -> float:
         """Compute transaction cost for a single rebalance.
 
-        Cost = sum(|w_new - w_old|) × cost_bps / 10000
+        ``Cost = sum(|w_new - w_old|) * cost_bps / 10000``
 
         The full round-trip turnover is halved because the cost
         rate is applied to one-way trades.
